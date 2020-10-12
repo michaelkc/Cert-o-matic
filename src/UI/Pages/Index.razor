@@ -1,0 +1,72 @@
+﻿@page "/"
+@inject UI.Logic.ISelfSignedCertificateGenerator SelfSignedCertificateGenerator
+@inject IJSRuntime js
+@using UI.Logic;
+@using System.Text;
+
+<h1>Generate self-signed certificates</h1>
+<p>
+    Generation is done entirely on the client-side via Blazor WASM - nothing, expect files you download, is stored after leaving this page.
+    Note that UI will freeze for 8+ seconds (worst case a few minutes) while generating.
+</p>
+<div class="form-group">
+    <input type="text" class="form-control" placeholder="Certificate subject" @bind:event="oninput" @bind="@subject" required @onkeyup="UpdateButtonState">
+</div>
+<div class="form-group">
+    <input type="password" class="form-control" placeholder="PFX password" @bind:event="oninput" @bind="@password" required @onkeyup="UpdateButtonState">
+</div>
+<div class="form-group">
+    <textarea class="form-control-plaintext" rows="10" placeholder="Public certificate (Base64 encoded) will appear here..." readonly>@base64PublicKey</textarea>
+</div>
+<button class="btn btn-primary" @onclick="@(async () => await GenerateCertificate())" disabled=@generateDisabled>Generate</button>
+<button class="btn btn-secondary" @onclick="@(async () => await DownloadPrivateKey())" disabled=@downloadDisabled>Download private key (pfx)</button>
+<button class="btn btn-secondary" @onclick="@(async () => await DownloadPublicKey())" disabled=@downloadDisabled>Download public key (cer)</button>
+
+
+@code {
+    private PublicCertificatePfxPair currentPair = null;
+    private string base64PublicKey = "";
+    private string subject = "";
+    private string password = "";
+    private bool generateDisabled  = true;
+    private bool downloadDisabled = true;
+
+    private void UpdateButtonState()
+    {
+        generateDisabled = string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(password);
+        downloadDisabled = currentPair?.PfxBytes == null || string.IsNullOrWhiteSpace(subject);
+        StateHasChanged();
+    }
+
+    private void SetPfx(PublicCertificatePfxPair pair)
+    {
+        currentPair = pair;
+        base64PublicKey = Convert.ToBase64String(pair.PublicCertificateBytes);
+    }
+
+    private async Task DownloadPrivateKey()
+    {
+        await DownloadUtil.StartClientDownload(js, $"{subject}.pfx", currentPair.PfxBytes);
+    }
+
+    private async Task DownloadPublicKey()
+    {
+        await DownloadUtil.StartClientDownload(js, $"{subject}.cer", Encoding.UTF8.GetBytes(Convert.ToBase64String(currentPair.PublicCertificateBytes)));
+    }
+
+    private async Task GenerateCertificate()
+    {
+        generateDisabled = true;
+        downloadDisabled = true;
+        // Hack to force buttons to disable properly
+        StateHasChanged();
+        await Task.Delay(TimeSpan.FromMilliseconds(1));
+        // Unfortunately, WASM is currently single threaded and the work cannot be split up
+        await Task.Run(() =>
+        {
+            var pair = SelfSignedCertificateGenerator.Generate(subject, password);
+            SetPfx(pair);
+        });
+        UpdateButtonState();
+    }
+}
